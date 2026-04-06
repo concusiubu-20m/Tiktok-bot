@@ -1,3 +1,4 @@
 aiohttp==3.10.11
 requests==2.32.3
 python-telegram-bot==21.6
+playwright==1.44.0

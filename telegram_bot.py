@@ -138,7 +138,8 @@ class SessionState:
         self.bot: Optional[TikTokViewBot] = None
         self.video_url: str = ""
         self.workers: int = 0
-        self.rps: int = 200
+        self.watch_seconds: int = 15   # giây xem mỗi lượt
+        self.use_mobile: bool = False
         self.target_views: int = 0
         self._extra_proxies: List[str] = []
 
@@ -226,51 +227,52 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     session = get_session(chat_id)
 
-    # Thông báo đang lấy IP
-    loading_msg = await update.message.reply_text(
-        "⏳ Đang lấy thông tin server...",
-    )
-
+    loading_msg = await update.message.reply_text("⏳ Đang lấy thông tin server...")
     public_ip = await get_public_ip()
 
     banner = (
-        "🤖 *TikTok View Bot v5.0*\n"
+        "🤖 *TikTok View Bot v6\\.0 – Playwright*\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🌐 *IP Server:* `{public_ip}`\n"
+        f"🌐 *IP Server:* `{_escape_md(public_ip)}`\n"
         f"🌐 *Proxy đã load:* `{session.proxy_count()} proxy`\n\n"
+        "✅ Dùng *browser thật* → view thật, proxy ghi nhận traffic\\!\n\n"
         "📋 *Lệnh có sẵn:*\n"
-        "/view \\<url\\>   – Bắt đầu gửi view\n"
-        "/stop           – Dừng bot\n"
-        "/stats          – Xem thống kê\n"
-        "/config         – Cấu hình hiện tại\n"
-        "/setworkers     – Đặt số workers\n"
-        "/setrps         – Đặt giới hạn req/s\n"
-        "/setlimit       – Giới hạn view tự dừng\n"
-        "/addproxy       – Thêm 1 proxy\n"
-        "/clearproxy     – Xoá tất cả proxy\n"
-        "/help           – Hướng dẫn\n\n"
-        "📁 *Gửi file `.txt`* để import proxy hàng loạt\\!"
+        "`/view <url>`     – Bắt đầu buff view\n"
+        "`/stop`           – Dừng bot\n"
+        "`/stats`          – Xem thống kê\n"
+        "`/config`         – Cấu hình hiện tại\n"
+        "`/setworkers N`   – Số browser đồng thời\n"
+        "`/setwatch N`     – Giây xem mỗi video \\(mặc định 15\\)\n"
+        "`/setlimit N`     – Tự dừng khi đủ view\n"
+        "`/mobile`         – Bật/tắt UA mobile\n"
+        "`/addproxy`       – Thêm 1 proxy\n"
+        "`/clearproxy`     – Xoá tất cả proxy\n"
+        "`/help`           – Hướng dẫn chi tiết\n\n"
+        "📁 Gửi file `.txt` để import proxy hàng loạt\\!"
     )
-
     await loading_msg.edit_text(banner, parse_mode=ParseMode.MARKDOWN_V2)
 
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "📖 *Hướng dẫn sử dụng*\n\n"
-        "*1\\. Bắt đầu gửi view:*\n"
-        "`/view https://www.tiktok.com/@user/video/ID`\n\n"
+        "📖 *Hướng dẫn sử dụng \\(v6\\.0\\)*\n\n"
+        "Bot dùng *browser thật* \\(Playwright\\) để xem video\\.\n"
+        "Proxy ghi nhận traffic thật, TikTok đếm view chính xác\\.\n\n"
+        "*1\\. Bắt đầu buff view:*\n"
+        "`/view https://www.tiktok.com/@user/video/ID`\n"
+        "Cũng hỗ trợ link rút gọn `vt.tiktok.com/xxx`\n\n"
         "*2\\. Dừng:*\n"
         "`/stop`\n\n"
         "*3\\. Thống kê:*\n"
         "`/stats`\n\n"
         "*4\\. Tuỳ chỉnh:*\n"
-        "`/setworkers 2000` – số luồng \\(10–10000\\)\n"
-        "`/setrps 300`      – request/giây tối đa\n"
-        "`/setlimit 5000`   – tự dừng khi đủ view \\(0\\=vô hạn\\)\n\n"
+        "`/setworkers 5`  – số browser song song \\(1–20\\)\n"
+        "`/setwatch 20`   – giây xem mỗi video \\(5–300\\)\n"
+        "`/setlimit 100`  – tự dừng khi đủ view \\(0\\=vô hạn\\)\n"
+        "`/mobile`        – bật/tắt giả lập thiết bị di động\n\n"
         "*5\\. Proxy:*\n"
-        "`/addproxy ip:port`         – thêm 1 proxy\n"
-        "`/clearproxy`               – xoá tất cả\n"
+        "`/addproxy ip:port`  – thêm 1 proxy\n"
+        "`/clearproxy`        – xoá tất cả\n"
         "📁 Gửi file `.txt` để import hàng loạt\n\n"
         "*Định dạng proxy hỗ trợ:*\n"
         "`ip:port`\n"
@@ -305,7 +307,7 @@ async def cmd_view(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     session.video_url = url
-    msg = await update.message.reply_text("🔍 Đang lấy Video ID và khởi động bot\\.\\.\\.", parse_mode=ParseMode.MARKDOWN_V2)
+    msg = await update.message.reply_text("🔍 Đang giải quyết URL và khởi động bot\\.\\.\\.", parse_mode=ParseMode.MARKDOWN_V2)
 
     # Xây dựng ProxyManager
     pm = ProxyManager(proxy_list=list(session._extra_proxies))
@@ -317,7 +319,8 @@ async def cmd_view(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     session.bot = TikTokViewBot(
         proxy_manager=pm,
         max_workers=session.workers,
-        max_rps=session.rps,
+        watch_seconds=session.watch_seconds,
+        use_mobile=session.use_mobile,
     )
 
     live_msg_id = msg.message_id
@@ -329,16 +332,18 @@ async def cmd_view(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     try:
         await session.bot.start(url)
-        proxy_info = f"{pm.has_proxies() and len(pm.proxies) or 0} proxy"
+        n_proxy = len(pm.proxies) if pm.has_proxies() else 0
+        mobile_label = "Mobile 📱" if session.use_mobile else "Desktop 🖥️"
         await ctx.application.bot.edit_message_text(
             chat_id=chat_id,
             message_id=live_msg_id,
             text=(
                 f"✅ *Bot đã khởi động\\!*\n\n"
-                f"🎯 URL: `{url}`\n"
-                f"🧵 Workers: `{session.bot.max_workers:,}`\n"
-                f"⚡ Max RPS: `{session.rps}`\n"
-                f"🌐 Proxy: `{proxy_info}`\n"
+                f"🎯 URL: `{_escape_md(url)}`\n"
+                f"🧵 Browsers: `{session.bot.max_workers}`\n"
+                f"⏱️ Xem mỗi video: `{session.watch_seconds}s`\n"
+                f"📱 Chế độ: `{mobile_label}`\n"
+                f"🌐 Proxy: `{n_proxy} proxy`\n"
                 f"🎯 Giới hạn: `{'Không giới hạn' if session.target_views == 0 else f'{session.target_views:,} view'}`\n\n"
                 "Nhấn 📊 để xem thống kê hoặc 🛑 để dừng\\."
             ),
@@ -395,12 +400,16 @@ async def cmd_config(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     session = get_session(chat_id)
     public_ip = await get_public_ip()
+    mobile_label = "Mobile 📱" if session.use_mobile else "Desktop 🖥️"
+    status = "🟢 Đang chạy" if session.is_running() else "🔴 Dừng"
 
     text = (
         "⚙️ *Cấu hình hiện tại:*\n\n"
-        f"🌐 IP Server: `{public_ip}`\n"
-        f"🧵 Workers: `{session.workers or 'Auto'}`\n"
-        f"⚡ Max RPS: `{session.rps}`\n"
+        f"🌐 IP Server: `{_escape_md(public_ip)}`\n"
+        f"🤖 Trạng thái: {_escape_md(status)}\n"
+        f"🧵 Browsers: `{session.workers or 'Auto'}`\n"
+        f"⏱️ Xem mỗi video: `{session.watch_seconds}s`\n"
+        f"📱 Chế độ: `{_escape_md(mobile_label)}`\n"
         f"🎯 Giới hạn view: `{'Không giới hạn' if session.target_views == 0 else f'{session.target_views:,}'}`\n"
         f"🌐 Proxy: `{session.proxy_count()} proxy`\n"
         f"📹 URL: `{_escape_md(session.video_url) or 'Chưa đặt'}`\n"
@@ -420,16 +429,24 @@ async def cmd_set_workers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Workers đã đặt: `{session.workers:,}`", parse_mode=ParseMode.MARKDOWN_V2)
 
 
-async def cmd_set_rps(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_set_watch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     session = get_session(update.effective_chat.id)
     if not ctx.args or not ctx.args[0].isdigit():
         await update.message.reply_text(
-            "❌ Cú pháp: `/setrps <số>`\nVí dụ: `/setrps 300`",
+            "❌ Cú pháp: `/setwatch <giây>`\nVí dụ: `/setwatch 20`",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
-    session.rps = max(10, min(int(ctx.args[0]), 2000))
-    await update.message.reply_text(f"✅ Max RPS đã đặt: `{session.rps}`", parse_mode=ParseMode.MARKDOWN_V2)
+    n = max(5, min(int(ctx.args[0]), 300))
+    session.watch_seconds = n
+    await update.message.reply_text(f"✅ Thời gian xem mỗi video: `{n}s`", parse_mode=ParseMode.MARKDOWN_V2)
+
+
+async def cmd_toggle_mobile(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    session = get_session(update.effective_chat.id)
+    session.use_mobile = not session.use_mobile
+    label = "Mobile 📱 \\(BẬT\\)" if session.use_mobile else "Desktop 🖥️ \\(TẮT\\)"
+    await update.message.reply_text(f"✅ Chế độ: {label}", parse_mode=ParseMode.MARKDOWN_V2)
 
 
 async def cmd_set_limit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -625,18 +642,19 @@ def _escape_md(text: str) -> str:
 async def post_init(app: Application):
     await app.bot.set_my_commands([
         BotCommand("start",      "Giới thiệu + IP server"),
-        BotCommand("view",       "Bắt đầu gửi view"),
+        BotCommand("view",       "Bắt đầu buff view"),
         BotCommand("stop",       "Dừng bot"),
         BotCommand("stats",      "Xem thống kê"),
         BotCommand("config",     "Cấu hình hiện tại"),
-        BotCommand("setworkers", "Đặt số workers"),
-        BotCommand("setrps",     "Đặt giới hạn req/s"),
+        BotCommand("setworkers", "Số browser đồng thời"),
+        BotCommand("setwatch",   "Giây xem mỗi video"),
         BotCommand("setlimit",   "Đặt giới hạn view"),
+        BotCommand("mobile",     "Bật/tắt chế độ mobile"),
         BotCommand("addproxy",   "Thêm 1 proxy"),
         BotCommand("clearproxy", "Xoá tất cả proxy"),
         BotCommand("help",       "Hướng dẫn"),
     ])
-    logger.info("Bot đã sẵn sàng!")
+    logger.info("Bot v6.0 Playwright đã sẵn sàng!")
 
 
 def main():
@@ -659,14 +677,13 @@ def main():
     app.add_handler(CommandHandler("stats",      cmd_stats))
     app.add_handler(CommandHandler("config",     cmd_config))
     app.add_handler(CommandHandler("setworkers", cmd_set_workers))
-    app.add_handler(CommandHandler("setrps",     cmd_set_rps))
+    app.add_handler(CommandHandler("setwatch",   cmd_set_watch))
     app.add_handler(CommandHandler("setlimit",   cmd_set_limit))
+    app.add_handler(CommandHandler("mobile",     cmd_toggle_mobile))
     app.add_handler(CommandHandler("addproxy",   cmd_add_proxy))
     app.add_handler(CommandHandler("clearproxy", cmd_clear_proxy))
     app.add_handler(CallbackQueryHandler(cb_handler))
-    # File .txt → import proxy
     app.add_handler(MessageHandler(filters.Document.FileExtension("txt"), doc_handler))
-    # Text thường → detect link TikTok
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_handler))
 
     logger.info("Đang khởi động polling...")
